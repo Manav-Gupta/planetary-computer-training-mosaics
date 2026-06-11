@@ -1,0 +1,33 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: halo-s2-download-mosaic
+description: Download Sentinel-2 scene samples from Planetary Computer and build mosaics.
+
+code: ..
+
+command: >-
+  python scripts/run_azure_pipeline.py
+  --config configs/planetary_config_azure_template.json
+  --fields-path ${{inputs.fields}}
+  --output-dir ${{outputs.samples}}
+  --steps inventory download mosaic
+  --mosaic-window-days 14
+  --mosaic-method median
+
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04
+  conda_file: environment.yml
+
+compute: azureml:cpu-cluster
+
+experiment_name: halo-sentinel2
+
+inputs:
+  fields:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/halo/fields/
+
+outputs:
+  samples:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/halo/planetary_computer_samples/
