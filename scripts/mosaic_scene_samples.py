@@ -6,12 +6,15 @@ import pandas as pd
 
 
 DEFAULT_BANDS = ["B2", "B3", "B4", "B8", "B11", "B12"]
+DEFAULT_INDICES = ["NDVI", "BSI", "NDTI", "NDII", "NBR", "NDSI"]
+DEFAULT_SUMMARY_METRICS = ["median", "p10", "p90", "std"]
 INDEX_DEPENDENCIES = {
     "NDVI": ["B8", "B4"],
     "BSI": ["B11", "B4", "B8", "B2"],
     "NDTI": ["B11", "B12"],
     "NDII": ["B8", "B11"],
     "NBR": ["B8", "B12"],
+    "NDSI": ["B3", "B11"],
 }
 
 
@@ -56,6 +59,19 @@ def parse_args():
         help="Raw bands to mosaic.",
     )
     parser.add_argument(
+        "--indices",
+        nargs="+",
+        default=DEFAULT_INDICES,
+        help="Indices to calculate in the final mosaic summary, e.g. NDVI BSI NDTI NBR.",
+    )
+    parser.add_argument(
+        "--summary-metrics",
+        nargs="+",
+        choices=["median", "p10", "p90", "std", "mean", "min", "max"],
+        default=DEFAULT_SUMMARY_METRICS,
+        help="Field-level metrics to export for each band/index.",
+    )
+    parser.add_argument(
         "--keep-coords",
         action="store_true",
         help="Keep lon/lat/x/y in the pixel mosaic using the first available coordinate per point/window.",
@@ -67,24 +83,32 @@ def safe_divide(num, den):
     return np.where(den != 0, num / den, np.nan)
 
 
-def add_indices(df):
-    if {"B8", "B4"}.issubset(df.columns):
+def add_indices(df, indices=None):
+    if indices is None:
+        indices = DEFAULT_INDICES
+
+    indices = {idx.upper() for idx in indices}
+
+    if "NDVI" in indices and {"B8", "B4"}.issubset(df.columns):
         df["NDVI"] = safe_divide(df["B8"] - df["B4"], df["B8"] + df["B4"])
 
-    if {"B11", "B4", "B8", "B2"}.issubset(df.columns):
+    if "BSI" in indices and {"B11", "B4", "B8", "B2"}.issubset(df.columns):
         df["BSI"] = safe_divide(
             (df["B11"] + df["B4"]) - (df["B8"] + df["B2"]),
             (df["B11"] + df["B4"]) + (df["B8"] + df["B2"]),
         )
 
-    if {"B11", "B12"}.issubset(df.columns):
+    if "NDTI" in indices and {"B11", "B12"}.issubset(df.columns):
         df["NDTI"] = safe_divide(df["B11"] - df["B12"], df["B11"] + df["B12"])
 
-    if {"B8", "B11"}.issubset(df.columns):
+    if "NDII" in indices and {"B8", "B11"}.issubset(df.columns):
         df["NDII"] = safe_divide(df["B8"] - df["B11"], df["B8"] + df["B11"])
 
-    if {"B8", "B12"}.issubset(df.columns):
+    if "NBR" in indices and {"B8", "B12"}.issubset(df.columns):
         df["NBR"] = safe_divide(df["B8"] - df["B12"], df["B8"] + df["B12"])
+
+    if "NDSI" in indices and {"B3", "B11"}.issubset(df.columns):
+        df["NDSI"] = safe_divide(df["B3"] - df["B11"], df["B3"] + df["B11"])
 
     return df
 
@@ -186,11 +210,16 @@ def quality_pixel_mosaic(df, bands, quality_band, quality_direction, keep_coords
     return best.merge(obs_count, on=group_cols, how="left")
 
 
-def summarize_fields(pixel_mosaic, bands):
-    pixel_mosaic = add_indices(pixel_mosaic.copy())
+def summarize_fields(pixel_mosaic, bands, indices=None, summary_metrics=None):
+    if indices is None:
+        indices = DEFAULT_INDICES
+
+    indices = [idx.upper() for idx in indices]
+    pixel_mosaic = add_indices(pixel_mosaic.copy(), indices=indices)
 
     metrics = [band for band in bands if band in pixel_mosaic.columns]
-    metrics += [idx for idx in ["NDVI", "BSI", "NDTI", "NDII", "NBR"] if idx in pixel_mosaic.columns]
+    metrics += [idx for idx in indices if idx in pixel_mosaic.columns]
+    summary_metrics = summary_metrics or DEFAULT_SUMMARY_METRICS
 
     group_cols = ["field_id", "window_start", "window_end"]
     agg = {
@@ -200,10 +229,20 @@ def summarize_fields(pixel_mosaic, bands):
     }
 
     for metric in metrics:
-        agg[f"{metric}_median"] = (metric, "median")
-        agg[f"{metric}_p10"] = (metric, lambda x: x.quantile(0.10))
-        agg[f"{metric}_p90"] = (metric, lambda x: x.quantile(0.90))
-        agg[f"{metric}_std"] = (metric, "std")
+        if "median" in summary_metrics:
+            agg[f"{metric}_median"] = (metric, "median")
+        if "p10" in summary_metrics:
+            agg[f"{metric}_p10"] = (metric, lambda x: x.quantile(0.10))
+        if "p90" in summary_metrics:
+            agg[f"{metric}_p90"] = (metric, lambda x: x.quantile(0.90))
+        if "std" in summary_metrics:
+            agg[f"{metric}_std"] = (metric, "std")
+        if "mean" in summary_metrics:
+            agg[f"{metric}_mean"] = (metric, "mean")
+        if "min" in summary_metrics:
+            agg[f"{metric}_min"] = (metric, "min")
+        if "max" in summary_metrics:
+            agg[f"{metric}_max"] = (metric, "max")
 
     summary = pixel_mosaic.groupby(group_cols).agg(**agg).reset_index()
 
@@ -230,6 +269,9 @@ def summarize_fields(pixel_mosaic, bands):
 
 def main():
     args = parse_args()
+    args.bands = [band.upper() for band in args.bands]
+    args.indices = [idx.upper() for idx in args.indices]
+    args.quality_band = args.quality_band.upper()
 
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
@@ -259,7 +301,11 @@ def main():
         raise ValueError("No scene samples found after date filtering.")
 
     samples = samples[samples["valid_px"] == True].copy()
-    samples = add_indices(samples)
+    sample_indices = set(args.indices)
+    if args.method == "quality" and args.quality_band not in args.bands:
+        sample_indices.add(args.quality_band)
+
+    samples = add_indices(samples, indices=sample_indices)
     samples = add_window_start(samples, start_date, args.window_days)
 
     if args.method == "median":
@@ -273,7 +319,12 @@ def main():
             keep_coords=args.keep_coords,
         )
 
-    field_summary = summarize_fields(pixel_mosaic, args.bands)
+    field_summary = summarize_fields(
+        pixel_mosaic,
+        args.bands,
+        indices=args.indices,
+        summary_metrics=args.summary_metrics,
+    )
 
     suffix = args.method
     if args.method == "quality":
@@ -298,6 +349,8 @@ def main():
         "quality_band": args.quality_band if args.method == "quality" else None,
         "quality_direction": args.quality_direction if args.method == "quality" else None,
         "bands": args.bands,
+        "indices": args.indices,
+        "summary_metrics": args.summary_metrics,
         "scene_sample_rows_after_filter": int(len(samples)),
         "pixel_mosaic_rows": int(len(pixel_mosaic)),
         "field_summary_rows": int(len(field_summary)),
