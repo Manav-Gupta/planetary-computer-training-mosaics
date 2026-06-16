@@ -39,6 +39,14 @@ def parse_args():
     )
     parser.add_argument("--mosaic-window-days", type=int, default=14)
     parser.add_argument(
+        "--mosaic-window-anchor-date",
+        default=None,
+        help=(
+            "Stable date used to anchor mosaic windows. Defaults to config start_date. "
+            "Use the original project start date when appending later runs."
+        ),
+    )
+    parser.add_argument(
         "--mosaic-method",
         choices=["median", "quality"],
         default="median",
@@ -53,6 +61,19 @@ def parse_args():
         "--keep-coords",
         action="store_true",
         help="Keep coordinates in the pixel mosaic.",
+    )
+    parser.add_argument(
+        "--mosaic-indices",
+        nargs="+",
+        default=None,
+        help="Indices to calculate in mosaic summary, e.g. NDVI BSI NDTI NBR.",
+    )
+    parser.add_argument(
+        "--mosaic-summary-metrics",
+        nargs="+",
+        choices=["median", "p10", "p90", "std", "mean", "min", "max"],
+        default=None,
+        help="Summary metrics to export, e.g. median p10 p90 std.",
     )
     return parser.parse_args()
 
@@ -142,6 +163,9 @@ def main():
             args.mosaic_method,
         ]
 
+        if args.mosaic_window_anchor_date is not None:
+            command.extend(["--window-anchor-date", args.mosaic_window_anchor_date])
+
         if args.mosaic_method == "quality":
             command.extend(
                 [
@@ -154,6 +178,12 @@ def main():
 
         if args.keep_coords:
             command.append("--keep-coords")
+
+        if args.mosaic_indices:
+            command.extend(["--indices", *args.mosaic_indices])
+
+        if args.mosaic_summary_metrics:
+            command.extend(["--summary-metrics", *args.mosaic_summary_metrics])
 
         run_command(command, cwd=scripts_dir)
 

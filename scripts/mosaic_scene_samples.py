@@ -34,6 +34,14 @@ def parse_args():
     )
     parser.add_argument("--start-date", default=None)
     parser.add_argument("--end-date", default=None)
+    parser.add_argument(
+        "--window-anchor-date",
+        default=None,
+        help=(
+            "Stable date used to anchor repeated mosaic windows. Defaults to --start-date. "
+            "Use the original project start date when appending later date ranges."
+        ),
+    )
     parser.add_argument("--window-days", type=int, default=14)
     parser.add_argument(
         "--method",
@@ -156,8 +164,8 @@ def read_scene_samples(input_dir, columns, start_date=None, end_date=None):
     return pd.concat(parts, ignore_index=True)
 
 
-def add_window_start(df, start_date, window_days):
-    anchor = pd.Timestamp(start_date, tz="UTC")
+def add_window_start(df, window_anchor_date, window_days):
+    anchor = pd.Timestamp(window_anchor_date, tz="UTC")
     elapsed_days = (df["datetime"] - anchor).dt.total_seconds() / 86400.0
     window_index = np.floor(elapsed_days / window_days).astype("int64")
     df["window_start"] = anchor + pd.to_timedelta(window_index * window_days, unit="D")
@@ -306,7 +314,8 @@ def main():
         sample_indices.add(args.quality_band)
 
     samples = add_indices(samples, indices=sample_indices)
-    samples = add_window_start(samples, start_date, args.window_days)
+    window_anchor_date = args.window_anchor_date or start_date
+    samples = add_window_start(samples, window_anchor_date, args.window_days)
 
     if args.method == "median":
         pixel_mosaic = median_pixel_mosaic(samples, args.bands, keep_coords=args.keep_coords)
@@ -344,6 +353,7 @@ def main():
         "output_dir": str(output_dir),
         "start_date": args.start_date,
         "end_date": args.end_date,
+        "window_anchor_date": window_anchor_date,
         "window_days": args.window_days,
         "method": args.method,
         "quality_band": args.quality_band if args.method == "quality" else None,
