@@ -23,6 +23,10 @@ SCRIPT_START = time.perf_counter()
 
 PROCESS = psutil.Process(os.getpid())
 
+S2_REFLECTANCE_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"]
+S2_BASELINE_HARMONIZATION_THRESHOLD = 4.0
+S2_BASELINE_OFFSET = 1000
+
 def _is_mpc(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host == "planetarycomputer.microsoft.com" or host.endswith(
@@ -49,6 +53,126 @@ def memory_mb():
 def log(message):
     elapsed = time.perf_counter() - SCRIPT_START
     print(f"[{elapsed:8.1f}s] {message}", flush=True)
+
+
+def get_s2_processing_baseline(item_or_props):
+    """Return the Sentinel-2 processing baseline as a string, when present."""
+    props = getattr(item_or_props, "properties", item_or_props)
+    if props is None:
+        return None
+
+    return (
+        props.get("s2:processing_baseline")
+        or props.get("sentinel:processing_baseline")
+        or props.get("processing:baseline")
+    )
+
+
+def parse_s2_processing_baseline(value):
+    if value is None or pd.isna(value):
+        return np.nan
+
+    try:
+        return float(str(value).split()[0])
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def should_harmonize_s2_baseline(item_or_props):
+    baseline = parse_s2_processing_baseline(get_s2_processing_baseline(item_or_props))
+    return bool(np.isfinite(baseline) and baseline >= S2_BASELINE_HARMONIZATION_THRESHOLD)
+
+
+def harmonize_s2_samples(samples, item):
+    """Shift Sentinel-2 PB >= 04.00 DNs back to the pre-2022 range."""
+    baseline_raw = get_s2_processing_baseline(item)
+    baseline_value = parse_s2_processing_baseline(baseline_raw)
+    apply_offset = should_harmonize_s2_baseline(item)
+
+    samples["s2_processing_baseline"] = baseline_raw
+    samples["s2_processing_baseline_value"] = baseline_value
+    samples["s2_baseline_harmonized"] = apply_offset
+    samples["s2_baseline_offset_applied"] = S2_BASELINE_OFFSET if apply_offset else 0
+
+    if not apply_offset:
+        return samples
+
+    bands = [band for band in S2_REFLECTANCE_BANDS if band in samples.columns]
+    if not bands:
+        return samples
+
+    log(
+        f"Harmonizing Sentinel-2 baseline {baseline_raw}: "
+        f"subtracting {S2_BASELINE_OFFSET} from {bands}"
+    )
+    samples[bands] = samples[bands].astype("float32") - S2_BASELINE_OFFSET
+    return samples
+
+
+def harmonize_s2_dataset(ds, item):
+    """Shift Sentinel-2 PB >= 04.00 DNs back before compositing."""
+    if not should_harmonize_s2_baseline(item):
+        return ds
+
+    baseline_raw = get_s2_processing_baseline(item)
+    bands = [band for band in S2_REFLECTANCE_BANDS if band in ds]
+    if not bands:
+        return ds
+
+    log(
+        f"Harmonizing Sentinel-2 baseline {baseline_raw}: "
+        f"subtracting {S2_BASELINE_OFFSET} from dataset bands {bands}"
+    )
+
+    ds = ds.copy()
+    for band in bands:
+        ds[band] = ds[band] - S2_BASELINE_OFFSET
+
+    return ds
+
+
+def harmonize_s2_timeseries_dataset(ds, items):
+    """Apply Sentinel-2 baseline harmonization along a loaded time dimension."""
+    if not items:
+        return ds
+
+    if "time" not in ds.dims:
+        return harmonize_s2_dataset(ds, items[0])
+
+    bands = [band for band in S2_REFLECTANCE_BANDS if band in ds]
+    if not bands:
+        return ds
+
+    sorted_items = sorted(
+        items,
+        key=lambda item: pd.to_datetime(item.properties.get("datetime"), errors="coerce"),
+    )
+    offsets = [
+        S2_BASELINE_OFFSET if should_harmonize_s2_baseline(item) else 0
+        for item in sorted_items
+    ]
+
+    if len(offsets) != ds.sizes["time"]:
+        log(
+            "Skipping baseline harmonization for composite dataset: "
+            f"{len(offsets)} item offsets for {ds.sizes['time']} time steps"
+        )
+        return ds
+
+    if not any(offsets):
+        return ds
+
+    log(
+        "Harmonizing Sentinel-2 baseline for composite dataset: "
+        f"subtracting per-scene offsets {sorted(set(offsets))} from bands {bands}"
+    )
+
+    ds = ds.copy()
+    offset_array = np.asarray(offsets, dtype=np.float32)[:, None, None]
+    for band in bands:
+        ds[band] = ds[band] - offset_array
+
+    return ds
 
 @contextmanager
 def timed_step(message):
@@ -579,6 +703,7 @@ def sample_scene(
 
     samples = pd.DataFrame(data)
     samples = samples.replace([np.inf, -np.inf], np.nan)
+    samples = harmonize_s2_samples(samples, item)
 
     if "SCL" in samples.columns:
         samples["valid_px"] = samples["SCL"].isin(valid_scl)
@@ -812,10 +937,12 @@ def load_composite(items, crs, x_bounds, y_bounds, assets, valid_scl, resolution
         )
     
     log(f"Loaded dataset dims: {dict(ds.sizes)}")
+    ds = rename_s2_bands(ds)
+    ds = harmonize_s2_timeseries_dataset(ds, items)
     
     with timed_step("Applying SCL mask"):
         clear = ds["SCL"].isin(valid_scl)
-        band_names = [b for b in assets if b != "SCL"]
+        band_names = [b for b in S2_REFLECTANCE_BANDS if b in ds]
         ds_masked = ds[band_names].where(clear)
         valid_obs_count = clear.sum(dim="time")
         total_obs_count = clear.count(dim="time")
@@ -826,14 +953,6 @@ def load_composite(items, crs, x_bounds, y_bounds, assets, valid_scl, resolution
         comp["valid_obs_count"] = valid_obs_count
         comp["total_obs_count"] = total_obs_count
         comp["valid_obs_fraction"] = valid_obs_count / total_obs_count
-
-    # Rename to your Earth Engine-style names.    
-    comp = comp.rename({
-        "B02": "B2",
-        "B03": "B3",
-        "B04": "B4",
-        "B08": "B8",
-    })
 
     with timed_step("Calculting indices"):
         comp["NDVI"] = (comp["B8"] - comp["B4"]) / (comp["B8"] + comp["B4"])
