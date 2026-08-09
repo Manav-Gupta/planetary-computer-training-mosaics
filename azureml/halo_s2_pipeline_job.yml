@@ -18,6 +18,9 @@ environment:
   image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04
   conda_file: environment.yml
 
+# CHANGE ME: a compute cluster that exists in your workspace.
+# You can override at submit time instead of editing this file:
+#   az ml job create -f azureml/halo_s2_pipeline_job.yml --set compute=azureml:<your-cluster>
 compute: azureml:cpu-cluster
 
 experiment_name: halo-sentinel2
@@ -25,9 +28,12 @@ experiment_name: halo-sentinel2
 inputs:
   fields:
     type: uri_folder
+    # CHANGE ME: datastore folder holding the field polygons (shapefile + .shx/.dbf/.prj,
+    # or a .gpkg/.geojson). The pipeline auto-picks the single vector file in this folder.
     path: azureml://datastores/workspaceblobstore/paths/halo/fields/
 
 outputs:
   samples:
     type: uri_folder
+    # CHANGE ME: datastore folder where scene samples and mosaics are written.
     path: azureml://datastores/workspaceblobstore/paths/halo/planetary_computer_samples/

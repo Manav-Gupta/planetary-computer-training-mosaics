@@ -212,11 +212,35 @@ def retry_with_backoff(label, func, retries=3, base_sleep=10):
             time.sleep(sleep_seconds)
 
 
+def resolve_fields_path(path):
+    """Return the actual vector file to read.
+
+    Azure ML mounts a ``uri_folder`` input as a directory, so ``--fields-path``
+    can arrive as a folder rather than the ``.shp`` itself. When given a
+    directory, pick the single vector file inside it (shapefile first, then
+    GeoPackage / GeoJSON). Passing a file path through is a no-op.
+    """
+    p = Path(path)
+    if not p.is_dir():
+        return p
+
+    for pattern in ("*.shp", "*.gpkg", "*.geojson", "*.json"):
+        matches = sorted(p.glob(pattern))
+        if matches:
+            if len(matches) > 1:
+                log(f"Multiple '{pattern}' files in {p}; using {matches[0].name}")
+            return matches[0]
+
+    raise FileNotFoundError(
+        f"No vector file (.shp/.gpkg/.geojson) found in fields directory: {p}"
+    )
+
+
 def load_config(config_path):
     with open(config_path, "r", encoding="utf-8") as file:
         config = json.load(file)
 
-    config["fields_path"] = Path(config["fields_path"])
+    config["fields_path"] = resolve_fields_path(config["fields_path"])
     config["output_dir"] = Path(config["output_dir"])
 
     return config
@@ -779,7 +803,7 @@ def run_scene_sampling(
 
 
 def process_one_scene_worker(scene_job, config):
-    fields = gpd.read_file(config["fields_path"])
+    fields = gpd.read_file(resolve_fields_path(config["fields_path"]))
 
     if fields.crs is None:
         fields = fields.set_crs("EPSG:4326")
