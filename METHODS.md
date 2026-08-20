@@ -209,3 +209,68 @@ run on the Red/Green/NIR bands.
   - `field_summary_median_14d.csv`: all 10 field IDs present, NDVI within
     a sensible growing-season trajectory (~0.2 in March rising to ~0.7 by
     late June for field 90.18.10.01.01.03), no out-of-range values.
+
+- 2026-08-20: **Local preview export.** Wrote a one-off script
+  (`.scratch/export_preview.py`, not committed - scratch only) to fetch one
+  real scene locally, run OmniCloudMask, and export true-color +
+  cloud-mask-class PNG/GeoTIFF previews for visual inspection, at the
+  user's request ("can I download the processed img and cloudmask").
+  Hit a `libomp.dll`/`libiomp5md.dll` duplicate-OpenMP-runtime crash
+  (common torch-on-Windows issue, unrelated to this project) - worked
+  around with `KMP_DUPLICATE_LIB_OK=TRUE`, not applied anywhere in the
+  committed pipeline code since it hasn't occurred there (Linux AML jobs
+  aren't affected; only hit this in ad hoc local scripting that imports
+  rasterio+torch together in a way the earlier local smoke tests didn't).
+
+## Scaling to all 87 fields, full calendar year 2025
+
+- 2026-08-20: **Measured before optimizing.** Ran `--stac-inventory-only`
+  locally (free, no imagery download) against all 87 unique EBRD fields
+  before deciding how to scale up:
+  - Mar 1 - Oct 1 2025: 674 scenes / 6 MGRS tiles / 8,584 field-scene
+    intersections (avg ~12.7 fields per scene - confirms the "read each
+    scene once" design avoids that much redundant reading).
+  - Jan 1 - Dec 31 2025 (full calendar year, per user request): 841
+    scenes / same 6 tiles / 10,530 field-scene intersections. Tiles
+    balanced 95-167 items each.
+
+- 2026-08-20: **Optimization: bigger single node, not multi-node
+  re-architecture.** The pipeline already reads each scene once regardless
+  of field overlap, so the lever for a bigger run is per-node parallelism.
+  `cluster-rise` (`Standard_E64ds_v4`: 64 vCPUs, 504GB RAM - confirmed via
+  `az vm list-sizes`) already exists in the workspace, idle, vs.
+  `cluster-rise-d16`'s 16 vCPUs/64GB. Switched compute to `cluster-rise`
+  and scaled `max_workers` from 8→32 with `OMP_NUM_THREADS`/
+  `MKL_NUM_THREADS` still capped at 2 (32×2=64, same core-matching
+  reasoning as the first test - see the `max_workers=8` entry above). No
+  pipeline code changes, and the already-built `sentinels_poly_timeseries_extract`
+  image needed no rebuild (images aren't tied to a specific compute
+  cluster). True multi-node horizontal scaling (sharding fields by MGRS
+  tile across cluster-rise's up to-32-node ceiling) was considered and
+  explicitly rejected as unnecessary re-architecture for only 6 tiles/
+  ~800-900 scenes - noted as a future option if the AOI grows much larger.
+
+- 2026-08-20: **Scope for this run, per explicit user instructions:**
+  all 87 fields (not the 10-field sample), Jan 1 - Dec 31 2025 (full
+  calendar year, not just the growing season used for the first test),
+  `inventory` + `download` steps only - **no `mosaic` step** ("just image
+  processing and cloud mask" - per-scene Parquet output only, compositing
+  deferred). `max_cloud_cover` kept at 90% (unchanged from the first
+  test). Config: `configs/test_ebrd87_2025.json`. Job spec:
+  `azureml/test_ebrd87_job.yml`. Output path distinct from the 10-field
+  test: `rise_data:JosefWagner/halo_azml/test_full87/...` (still a test
+  path, not a production deliverable location - this remains the EBRD
+  validation dataset, not HALO's own field data). Job:
+  `mango_kale_yb18t1cfhr`.
+
+- 2026-08-20: **Snow, for the record.** User asked how OmniCloudMask
+  handles snow, relevant now that the run spans winter months. Could not
+  access the peer-reviewed benchmark (paywalled), so no precise accuracy
+  number is claimed. What's verifiable: OCM's training data was
+  deliberately curated with snow as a "hard negative" cloud-like surface
+  (alongside sand/haze), unlike SCL which has a dedicated snow class (11)
+  that used to be in `valid_scl_classes`. OCM has no separate snow output
+  class - misclassified snow would show up as cloud and get masked out.
+  For this pipeline's purpose (crop/vegetation monitoring), that's a
+  reasonable failure mode even in the worst case: a snow-covered field
+  isn't giving a usable NDVI regardless of the label.

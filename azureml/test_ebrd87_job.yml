@@ -1,0 +1,42 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: halo-s2-cloudmask-test-ebrd87-2025full
+description: >-
+  Scaled-up test of the OmniCloudMask integration (fix/addCloudMasking)
+  against all 87 unique EBRD field polygons, full calendar year 2025
+  (Jan 1 - Dec 31). Inventory + per-scene download/masking only, no
+  mosaic/composite step. Follows the 10-field test
+  (funny_rhubarb_dzgn92fvr0). Not the production job - see
+  halo_s2_pipeline_job.yml for that.
+
+code: ..
+
+command: >-
+  python scripts/run_azure_pipeline.py
+  --config configs/test_ebrd87_2025.json
+  --fields-path ${{inputs.fields}}
+  --output-dir ${{outputs.samples}}
+  --steps inventory download
+
+environment: azureml:sentinels_poly_timeseries_extract@latest
+
+# max_workers=32 in configs/test_ebrd87_2025.json x OMP/MKL_NUM_THREADS=2 = 64,
+# matching cluster-rise's 64 vCPUs (Standard_E64ds_v4, 504GB RAM) without
+# oversubscribing torch's per-process CPU thread pool. See METHODS.md.
+environment_variables:
+  OMP_NUM_THREADS: "2"
+  MKL_NUM_THREADS: "2"
+
+compute: azureml:cluster-rise
+
+experiment_name: halo-sentinel2-cloudmask-test
+
+inputs:
+  fields:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test_full87/fields/
+
+outputs:
+  samples:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test_full87/planetary_computer_samples/
