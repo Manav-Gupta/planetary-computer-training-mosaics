@@ -3,6 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+import xarray as xr
 import planetary_computer
 import pystac_client
 import odc.stac
@@ -17,6 +18,8 @@ import os
 from urllib.parse import urlparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import pystac
+
+from cloud_mask import ocm_clear_mask, OCM_CLEAR
 
 
 SCRIPT_START = time.perf_counter()
@@ -543,6 +546,32 @@ def rename_s2_bands(ds):
     return ds.rename(rename_map)
 
 
+def add_ocm_mask(ds):
+    """Run OmniCloudMask on one loaded scene and attach OCM_CLASS/OCM_CLEAR.
+
+    Requires the red (B4), green (B3), and NIR (B8) bands to already be
+    loaded in ``ds``. Runs once for the whole array already in memory (the
+    field-bounded window that was just read), not the full source tile.
+    """
+    required = ("B4", "B3", "B8")
+    missing = [band for band in required if band not in ds]
+    if missing:
+        raise ValueError(
+            f"Cannot compute OmniCloudMask: missing required band(s) {missing}. "
+            "Include B04, B03, and B08 in the config 'assets' list."
+        )
+
+    with timed_step("Computing OmniCloudMask cloud/shadow mask"):
+        clear, ocm_class = ocm_clear_mask(
+            ds["B4"].values, ds["B3"].values, ds["B8"].values,
+        )
+
+    ds = ds.copy()
+    ds["OCM_CLASS"] = (("y", "x"), ocm_class)
+    ds["OCM_CLEAR"] = (("y", "x"), clear)
+    return ds
+
+
 def load_scene(item, crs, x_bounds, y_bounds, assets, resolution=10):
     log(f"Loading scene item: {item.id}")
     log(f"Loading assets: {assets}")
@@ -567,6 +596,8 @@ def load_scene(item, crs, x_bounds, y_bounds, assets, resolution=10):
 
     with timed_step("Computing scene into memory"):
         ds = ds.load()
+
+    ds = add_ocm_mask(ds)
 
     return ds
 
@@ -646,7 +677,6 @@ def sample_scene(
     fields_proj,
     item,
     field_id_col,
-    valid_scl,
     max_pixels_per_scene=None,
     random_seed=1,
 ):
@@ -689,7 +719,8 @@ def sample_scene(
         log(f"Sampled down to max_pixels_per_scene={max_pixels_per_scene:,}")
 
     sample_bands = [
-        "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12", "SCL"
+        "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12", "SCL",
+        "OCM_CLASS",
     ]
     sample_bands = [band for band in sample_bands if band in scene]
 
@@ -729,10 +760,12 @@ def sample_scene(
     samples = samples.replace([np.inf, -np.inf], np.nan)
     samples = harmonize_s2_samples(samples, item)
 
-    if "SCL" in samples.columns:
-        samples["valid_px"] = samples["SCL"].isin(valid_scl)
-    else:
-        samples["valid_px"] = True
+    if "OCM_CLASS" not in samples.columns:
+        raise ValueError(
+            "OCM_CLASS column missing from scene samples; the OmniCloudMask "
+            "mask must be computed before sampling (see add_ocm_mask())."
+        )
+    samples["valid_px"] = samples["OCM_CLASS"] == OCM_CLEAR
 
     with timed_step("Converting scene sample coordinates to lon/lat"):
         samples_gdf = gpd.GeoDataFrame(
@@ -913,7 +946,6 @@ def process_one_scene_item(
                 fields_batch,
                 item,
                 field_id_col=config["field_id_col"],
-                valid_scl=config["valid_scl_classes"],
                 max_pixels_per_scene=config.get("max_pixels_per_scene"),
                 random_seed=config.get("random_seed", 1),
             )
@@ -939,7 +971,7 @@ def process_one_scene_item(
         return f"Scene failed: {item.id} | {exc}"
 
 
-def load_composite(items, crs, x_bounds, y_bounds, assets, valid_scl, resolution=10):
+def load_composite(items, crs, x_bounds, y_bounds, assets, resolution=10):
     if not items:
         return None
 
@@ -963,9 +995,33 @@ def load_composite(items, crs, x_bounds, y_bounds, assets, valid_scl, resolution
     log(f"Loaded dataset dims: {dict(ds.sizes)}")
     ds = rename_s2_bands(ds)
     ds = harmonize_s2_timeseries_dataset(ds, items)
-    
-    with timed_step("Applying SCL mask"):
-        clear = ds["SCL"].isin(valid_scl)
+
+    for band in ("B4", "B3", "B8"):
+        if band not in ds:
+            raise ValueError(
+                f"Cannot compute OmniCloudMask: missing required band '{band}'. "
+                "Include B04, B03, and B08 in the config 'assets' list."
+            )
+
+    with timed_step("Computing OmniCloudMask cloud/shadow mask per scene"):
+        n_time = ds.sizes["time"]
+        clear_stack = np.empty((n_time, ds.sizes["y"], ds.sizes["x"]), dtype=bool)
+
+        for t in range(n_time):
+            clear_t, _ = ocm_clear_mask(
+                ds["B4"].isel(time=t).values,
+                ds["B3"].isel(time=t).values,
+                ds["B8"].isel(time=t).values,
+            )
+            clear_stack[t] = clear_t
+
+        clear = xr.DataArray(
+            clear_stack,
+            dims=("time", "y", "x"),
+            coords={"time": ds["time"], "y": ds["y"], "x": ds["x"]},
+        )
+
+    with timed_step("Applying OmniCloudMask"):
         band_names = [b for b in S2_REFLECTANCE_BANDS if b in ds]
         ds_masked = ds[band_names].where(clear)
         valid_obs_count = clear.sum(dim="time")
@@ -1168,7 +1224,7 @@ def main():
             log("Skippeing window: no items found")
             continue
         
-        with timed_step("Loading S2 bands, applying SCL mask, and building composite"):
+        with timed_step("Loading S2 bands, applying OmniCloudMask, and building composite"):
             comp = retry_with_backoff(
                 "Loading/compositing Sentinel-2 assets",
                 lambda: load_composite(
@@ -1176,7 +1232,6 @@ def main():
                     target_crs,
                     x_bounds,
                     y_bounds,
-                    valid_scl=config["valid_scl_classes"],
                     assets=config["assets"],
                     resolution=config["resolution"],
                 ),

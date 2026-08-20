@@ -2,6 +2,11 @@ data/planetary_computer_samples/
 **/*.parquet
 **/__pycache__/
 *.pyc
+*azml.txt
+*.env
 
 # Claude Code session/config files
 .claude/
+
+# OmniCloudMask downloaded model weights
+.model_cache/
