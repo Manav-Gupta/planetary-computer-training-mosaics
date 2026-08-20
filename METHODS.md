@@ -121,3 +121,66 @@ run on the Red/Green/NIR bands.
   ASCII `dRAM=` (log text only, no behavior change). Re-verified the
   `add_ocm_mask()` smoke test runs clean without the earlier
   `PYTHONIOENCODING=utf-8` workaround.
+
+## First real Azure ML test (`configs/test_ebrd10_2025.json`, `azureml/test_ebrd10_job.yml`)
+
+- 2026-08-20: **Test field selection.** `configs/test_data/EBRD_merged_20251212_geoDb.gpkg`
+  (git-ignored, 203MB, dropped in locally by the user) is a farm-operations
+  log, not a clean field layer: 16,714 rows but only 87 unique fields (each
+  repeated across many operation records with identical geometry). Deduped
+  on `Field ID` to 87 unique polygons, then randomly sampled 10 with
+  `gdf.sample(n=10, random_state=42)` → written to
+  `configs/test_data/ebrd_test10_fields.geojson` (git-ignored, small enough
+  to not matter but kept alongside the source for reproducibility). Seed 42
+  chosen for reproducibility, matching the pipeline's own default
+  `random_seed`. Selected Field IDs: 90.18.10.01.01.03, 90.18.10.01.01.05,
+  90.18.10.01.01.09, 90.18.13.14.55.13, 90.18.13.14.56.09, 90.18.13.14.58.08,
+  90.18.13.29.99.12, 90.18.13.29.99.17, 90.25.04.05.06.06, 90.25.15.05.13.23.
+
+- 2026-08-20: **`.amlignore` added.** The 203MB source geopackage sitting in
+  `configs/test_data/` would otherwise get swept into the job's code
+  snapshot (`halo_s2_pipeline_job.yml`/`test_ebrd10_job.yml` both use
+  `code: ..`, i.e. the whole repo root). Added `.amlignore` mirroring the
+  `.gitignore` data/model exclusions, per the standing rule to check every
+  ignore-style file (not just `.gitignore`) before letting a bulky local
+  file sit in-tree.
+
+- 2026-08-20: **Test date range: March–October 2025** (`start_date`/
+  `end_date` in `configs/test_ebrd10_2025.json`), per explicit user
+  instruction — a 2025-growing-season window over the 10 selected fields.
+
+- 2026-08-20: **max_cloud_cover loosened to 90%** (vs. the production
+  template's 40%) for this test only. Since OmniCloudMask now does the
+  real per-pixel filtering, the STAC-level `eo:cloud_cover` pre-filter is
+  just a coarse pre-fetch filter; loosening it exercises OCM against a
+  wider range of scene conditions rather than relying on the scene-level
+  metadata to have already screened out cloud.
+
+- 2026-08-20: **max_workers=8 with `OMP_NUM_THREADS=2`/`MKL_NUM_THREADS=2`.**
+  `cluster-rise-d16` has 16 vCPUs. Each `ProcessPoolExecutor` worker in
+  `run_scene_sampling()` runs its own PyTorch/OmniCloudMask instance;
+  PyTorch's CPU backend defaults to using *all visible cores* per process
+  for intra-op parallelism unless told otherwise, so naively setting
+  `max_workers=16` would oversubscribe the node (up to 16 processes × up to
+  16 threads each). Capped each worker to 2 threads via env vars (which
+  PyTorch reads automatically at process start — no code change needed,
+  and `ProcessPoolExecutor` workers inherit the parent's environment) and
+  set `max_workers=8`, so 8 × 2 = 16 matches the node's core count. More
+  processes (rather than more threads per process) was chosen because
+  scene loading is largely network-bound (downloading Sentinel-2 COG
+  assets from Planetary Computer) while OCM inference is CPU-bound, so
+  process-level parallelism lets one scene's network wait overlap with
+  another's inference. Set only in `azureml/test_ebrd10_job.yml` (test-only),
+  not the production `halo_s2_pipeline_job.yml` — the right max_workers/
+  thread split for a production run depends on whatever compute cluster
+  is eventually used for that, not decided yet.
+
+- 2026-08-20: **Test data path convention:** uploaded the 10-field GeoJSON
+  to `rise_data` datastore at
+  `JosefWagner/halo_azml/test/fields/ebrd_test10_fields.geojson`, matching
+  the `<username>/<project>_azml/<stage>/...` convention documented in
+  `azml.txt`. Output written to
+  `rise_data:JosefWagner/halo_azml/test/planetary_computer_samples/`.
+  Compute: `cluster-rise-d16` (hardcoded in `test_ebrd10_job.yml`, unlike
+  the production job's overridable placeholder — this is a one-off test,
+  not meant to be reused as a template for arbitrary clusters).
