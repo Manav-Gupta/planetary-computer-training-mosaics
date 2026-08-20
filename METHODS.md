@@ -113,11 +113,11 @@ run on the Red/Green/NIR bands.
   expected `OCM_CLASS`/`OCM_CLEAR`/`valid_px` output and the model weights
   downloaded correctly into the git-ignored `.model_cache/`.
 
-- 2026-08-20: **Found, not fixed:** `timed_step()`'s log message
-  (`download_s2_pc.py`) includes a `Δ` character that raises
-  `UnicodeEncodeError` on a plain Windows console (cp1252 stdout) — it
-  never surfaced before because Azure ML's Linux containers default to
-  UTF-8. This is pre-existing, unrelated to cloud masking, and out of
-  scope for this branch; flagged for the user to decide whether to fix
-  separately (workaround used for local testing here:
-  `PYTHONIOENCODING=utf-8`).
+- 2026-08-20: **Found and fixed (user requested):** `timed_step()`'s log
+  message (`download_s2_pc.py`) included a `Δ` character that raised
+  `UnicodeEncodeError` on a plain Windows console (cp1252 stdout) — never
+  surfaced before because Azure ML's Linux containers default to UTF-8.
+  Pre-existing, unrelated to cloud masking; replaced `ΔRAM=` with plain
+  ASCII `dRAM=` (log text only, no behavior change). Re-verified the
+  `add_ocm_mask()` smoke test runs clean without the earlier
+  `PYTHONIOENCODING=utf-8` workaround.
