@@ -195,7 +195,7 @@ def timed_step(message):
             f"DONE:  {message} "
             f"({end_time - start_time:.1f}s) | "
             f"RAM={end_mem:.1f} MB | "
-            f"ΔRAM={end_mem - start_mem:+.1f} MB"
+            f"dRAM={end_mem - start_mem:+.1f} MB"
         )
         
 def retry_with_backoff(label, func, retries=3, base_sleep=10):
