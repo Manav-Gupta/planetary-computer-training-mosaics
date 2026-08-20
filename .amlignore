@@ -1,0 +1,13 @@
+# Excludes files from the Azure ML job code snapshot (halo_s2_pipeline_job.yml
+# uses `code: ..`, i.e. the whole repo root). Keep this in sync with
+# .gitignore's data/model exclusions - large or irrelevant local files here
+# would otherwise get uploaded as part of every job submission.
+.git/
+.claude/
+.model_cache/
+.venv/
+data/planetary_computer_samples/
+configs/test_data/
+**/__pycache__/
+**/*.parquet
+*.pyc
