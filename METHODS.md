@@ -184,3 +184,28 @@ run on the Red/Green/NIR bands.
   Compute: `cluster-rise-d16` (hardcoded in `test_ebrd10_job.yml`, unlike
   the production job's overridable placeholder — this is a one-off test,
   not meant to be reused as a template for arbitrary clusters).
+
+- 2026-08-20: **Test result: passed.** Job `funny_rhubarb_dzgn92fvr0`
+  (`halo-s2-cloudmask-test-ebrd10`) completed successfully — ~27 min total
+  (first-time image build ~10 min, cold-start node scaling from 0, then
+  the actual inventory→download→mosaic run). Verified by downloading real
+  output from `rise_data:JosefWagner/halo_azml/test/planetary_computer_samples/`:
+  - Scene-sample Parquet files written across 3 MGRS tiles (36UVA, 36UVB,
+    36UWB — matches the 10 fields' geographic spread) and multiple months
+    (March onward).
+  - Spot-checked one real scene (`S2A_MSIL2A_20250314T085751...`, field
+    `90.25.04.05.06.06`, 58,941 pixel rows): `OCM_CLASS` was 0 (clear) for
+    6,593 px, 1 (thick cloud) for 4 px, 2 (thin cloud) for 52,344 px —
+    `valid_px == (OCM_CLASS == 0)` held for every row. **Concretely
+    validates the SCL→OCM switch**: SCL classified most of those same
+    thin-cloud pixels as class 5 (bare soil — one of the *old*
+    `valid_scl_classes`) or class 10 (thin cirrus), i.e. the retired SCL
+    filter would have kept ~24,225 px as "valid" that OmniCloudMask
+    correctly flags as thin cloud.
+  - Mosaic output (`mosaic_metadata_median_14d.json`): 8,866,575 valid
+    scene-sample rows survived the OCM filter → 3,198,171 pixel-mosaic
+    rows → 158 field-summary rows (10 fields × ~15.8 fourteen-day windows
+    over the ~214-day range, as expected).
+  - `field_summary_median_14d.csv`: all 10 field IDs present, NDVI within
+    a sensible growing-season trajectory (~0.2 in March rising to ~0.7 by
+    late June for field 90.18.10.01.01.03), no out-of-range values.
