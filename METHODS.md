@@ -394,3 +394,18 @@ run on the Red/Green/NIR bands.
   `JosefWagner/halo_azml/full87_2017_2024/planetary_computer_samples/`
   (dropped the `test_` prefix - this is the actual requested deliverable
   scope, not a validation test, though it's still the EBRD field set).
+- 2026-08-20/21: **Backfill (`strong_snail_hx97rg42xw`) completed and
+  verified.** ~4,966s (~82.8 min) of pipeline runtime, close to the
+  ~85-90 min estimate. `std_log.txt`: 8,851 `START: Computing
+  OmniCloudMask` lines, 8,851 matching `DONE:` lines (every call
+  completed), 0 `Scene failed` lines. Output verified by listing the
+  datastore directly (`az storage blob list --num-results "*"` - the
+  default single-page listing silently truncates at 5,000 blobs and
+  undercounted this run's ~6,100 blobs by ~500, so the full listing
+  mattered for a real count): 5,515 scene-parquet files, 39.1GB, all 8
+  years (2017-2024) and all 6 MGRS tiles represented - scene counts per
+  year weighted toward 2022-2023 (861/979) vs 2017 (426), consistent
+  with Sentinel-2B only reaching full constellation partway through
+  2017. Both fixes (model-download race, fork-after-torch-init deadlock)
+  held at this larger scale. This is the requested 2017-2024 deliverable
+  for all 87 EBRD field polygons.
