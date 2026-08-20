@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import pystac
 
-from cloud_mask import ocm_clear_mask, OCM_CLEAR
+from cloud_mask import ocm_clear_mask, warm_model_cache, OCM_CLEAR
 
 
 SCRIPT_START = time.perf_counter()
@@ -796,6 +796,10 @@ def run_scene_sampling(
 
     if max_workers > 1:
         log(f"Running scene sampling with max_workers={max_workers}")
+
+        with timed_step("Pre-downloading OmniCloudMask model weights"):
+            warm_model_cache()
+
         worker_config = dict(config)
         worker_config["fields_path"] = str(worker_config["fields_path"])
         worker_config["output_dir"] = str(worker_config["output_dir"])

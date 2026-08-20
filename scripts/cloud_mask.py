@@ -76,3 +76,20 @@ def ocm_clear_mask(red, green, nir, no_data_value=0.0):
     ocm_class = compute_ocm_class(red, green, nir, no_data_value=no_data_value)
     clear = ~np.isin(ocm_class, OCM_INVALID_CLASSES)
     return clear, ocm_class
+
+
+def warm_model_cache():
+    """Force the OmniCloudMask model weights to download, synchronously.
+
+    Must be called once in the main process before spinning up parallel
+    scene-processing workers. omnicloudmask downloads its weights lazily
+    on first use; if multiple worker processes hit an empty cache at the
+    same time, they race to write the same file and most of them crash
+    with a spurious "No such file or directory" on the partially-written
+    weights (observed at max_workers=32 on a cold cache - not a fluke,
+    reproduced consistently). Calling this first, single-threaded, means
+    the file already exists by the time workers start, so none of them
+    ever trigger a download.
+    """
+    dummy = np.zeros((64, 64), dtype="float32")
+    compute_ocm_class(dummy, dummy, dummy)

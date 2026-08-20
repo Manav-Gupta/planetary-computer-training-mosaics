@@ -274,3 +274,37 @@ run on the Red/Green/NIR bands.
   For this pipeline's purpose (crop/vegetation monitoring), that's a
   reasonable failure mode even in the worst case: a snow-covered field
   isn't giving a usable NDVI regardless of the label.
+
+- 2026-08-20: **Bug found and fixed: model-download race condition at high
+  parallelism.** `mango_kale_yb18t1cfhr` (87 fields, full year 2025,
+  `max_workers=32`) reported `status: Completed` but only wrote 17 of an
+  expected ~841 scene Parquet files - a near-total silent data loss that
+  the job's exit code did not surface. Diagnosed by downloading *only the
+  job's text logs* (`az ml job download` without `--output-name`, which
+  fetches the "default" artifacts output - system/user logs - not the
+  "samples" data output; never downloaded the actual scene/imagery data
+  locally, per explicit user instruction). `std_log.txt` showed hundreds
+  of `Scene failed: ... | No such file or directory:
+  .../.model_cache/omnicloudmask/PM_model_....safetensors` errors,
+  clustered in the job's first ~150s. Root cause: `omnicloudmask`
+  downloads its model weights lazily on first use; with 32
+  `ProcessPoolExecutor` workers all hitting an *empty* cache simultaneously
+  at job start, they raced to write the same weights file, and most lost
+  the race and crashed (each scene's failure was caught per-scene by the
+  existing try/except in `process_one_scene_item`, logged, and skipped -
+  which is why the job "succeeded" overall despite ~98% data loss).
+  Cross-checked the earlier 10-field test (`funny_rhubarb_dzgn92fvr0`,
+  `max_workers=8`): zero `Scene failed` lines, 286/388 items correctly
+  written - that earlier "passed" verdict stands; the race only manifests
+  at higher parallelism racing a *cold* cache.
+  **Fix**: added `warm_model_cache()` (`scripts/cloud_mask.py`) - runs one
+  dummy OCM inference synchronously to force the model download to
+  complete - called once in `run_scene_sampling()`
+  (`scripts/download_s2_pc.py`) before the `ProcessPoolExecutor` is
+  created, so the weights file already exists by the time workers start
+  and none of them ever trigger a download. Verified the function runs
+  correctly locally post-fix. Re-running `mango_kale_yb18t1cfhr`'s exact
+  scope (same config/job spec) with the fix applied before treating that
+  data as usable, and before proceeding to any larger run (full-tile test,
+  a possible future 2017-2024 backfill) that would hit the same race at
+  even larger scale.
