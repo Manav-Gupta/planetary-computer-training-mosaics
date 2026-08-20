@@ -353,3 +353,44 @@ run on the Red/Green/NIR bands.
   once this test completes cleanly (all scenes processed, `Scene failed`
   count consistent with real STAC/asset issues rather than systemic
   worker failure).
+
+- 2026-08-20: **Third attempt (`bold_wire_std9sty1fb`) passed - fix
+  confirmed.** Completed in ~757s (~12.6 min) of actual pipeline runtime.
+  `std_log.txt`: 1,249 `START: Computing OmniCloudMask` lines, 1,249
+  matching `DONE:` lines (every worker call completed - no hang), 0
+  `Scene failed` lines. Output: 855 files under
+  `scene_samples_batched/` (841 scene-parquet files matching the
+  inventory's 841-scene count for Jan-Dec 2025 + 2 per-tile placeholder
+  entries x 6 tiles = 12, ~855 total), 5.4GB, all 12 months and all 6
+  MGRS tiles represented. This is the real pass the earlier
+  `mango_kale_yb18t1cfhr` "Completed" status was not (that one silently
+  dropped ~98% of scenes - see above). Both the download race and the
+  fork deadlock are now fixed.
+
+## 2017-2024 backfill (87 EBRD fields, all polygons)
+
+- 2026-08-20: **Scope, per explicit user instruction:** same 87 unique
+  EBRD field polygons already validated above (`ebrd_all87_fields.geojson`
+  - this is "all polygons" in this dataset; there is no larger production
+  field set in the repo, and `EBRD_merged_20251212_geoDb.gpkg`
+  (`configs/test_data/`) confirmed to be a per-operation records table
+  keyed by the same `Field ID` - i.e. many rows per field, not a bigger
+  polygon set - so the 87 fields already tested *are* "all polygons").
+  Date range `2017-01-01` to `2024-12-31` (8 calendar years), same
+  `inventory` + `download` steps only (no `mosaic`), consistent with the
+  validated 87-field/2025 scope - not asked for mosaic output, and this
+  keeps risk parity with what's already been proven to work end-to-end.
+  Config: `configs/test_ebrd87_2017_2024.json`. Job spec:
+  `azureml/ebrd87_2017_2024_job.yml`.
+- 2026-08-20: **Measured before submitting.** Ran `--stac-inventory-only`
+  locally (free, no imagery) against the same 87 fields for the full
+  2017-2024 range: 5,979 Sentinel-2 items / same 6 MGRS tiles / 75,550
+  field-scene intersections - about 7.1x the 2025-only scene count (841),
+  less than a full 8x because Sentinel-2B didn't launch until March 2017
+  (2017 alone only has S2A's ~10-day revisit until S2B comes online).
+  Extrapolating from the validated 2025 run (855 files, 5.4GB, ~757s at
+  `max_workers=32` on `cluster-rise`): expect roughly 5,979 scene-parquet
+  files, ~38GB, ~85-90 min runtime. Output path:
+  `JosefWagner/halo_azml/full87_2017_2024/planetary_computer_samples/`
+  (dropped the `test_` prefix - this is the actual requested deliverable
+  scope, not a validation test, though it's still the EBRD field set).
