@@ -2,3 +2,6 @@ data/planetary_computer_samples/
 **/*.parquet
 **/__pycache__/
 *.pyc
+
+# Claude Code session/config files
+.claude/
