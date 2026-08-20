@@ -308,3 +308,48 @@ run on the Red/Green/NIR bands.
   data as usable, and before proceeding to any larger run (full-tile test,
   a possible future 2017-2024 backfill) that would hit the same race at
   even larger scale.
+
+- 2026-08-20: **Bug found and fixed: fork-after-torch-init deadlock in the
+  race-condition fix itself.** The re-run of `mango_kale_yb18t1cfhr`'s scope
+  with the `warm_model_cache()` fix (`quiet_leather_wlz7n45797`, display
+  name `...-retry`) showed `status: Running` for ~2h with zero progress.
+  Diagnosed without waiting for job completion: read `std_log.txt` and
+  `scene_samples_batched/` blobs directly from the datastore/artifact store
+  (`az storage blob list`/`download` against the `rise_data` and
+  `workspaceartifactstore` datastores - bypasses `az ml job download`'s
+  "must be Completed" restriction, and avoids downloading any imagery, only
+  small text/log blobs). Found `std_log.txt` stopped growing 53s after job
+  start - exactly 32 `START: Computing OmniCloudMask...` lines
+  (`max_workers=32`), zero matching `DONE:` lines, zero exceptions logged:
+  a deadlock, not a crash, with every single worker hung on its first
+  inference call. Root cause: `warm_model_cache()` ran a real torch
+  inference in the *main* process (to force the model download
+  synchronously, fixing the earlier race), which initializes torch's
+  OpenMP thread pool there; `ProcessPoolExecutor` then forks its 32 workers
+  from that same main process (Python's default `multiprocessing` start
+  method on Linux is `fork`). A process forked after the parent has an
+  initialized OpenMP thread pool inherits corrupted thread-pool
+  bookkeeping (the child gets only the forking thread, not OpenMP's other
+  worker threads, but OpenMP's internal state is copied as-is) - a
+  well-documented fork/OpenMP hazard, and it matches the evidence exactly
+  (all workers hang on their first torch op, no exceptions, node otherwise
+  healthy). Cancelled `quiet_leather_wlz7n45797` (`az ml job cancel`) once
+  diagnosed. **Fix**: `warm_model_cache()` (`scripts/cloud_mask.py`) now
+  runs its dummy inference in a throwaway subprocess spawned via
+  `multiprocessing.get_context("spawn")`, not in-process - the main
+  process itself never executes a torch op, so `ProcessPoolExecutor`'s
+  later fork starts from a clean, torch-untouched parent. Verified locally
+  (Windows, where `spawn` is already the default and can't reproduce the
+  Linux fork deadlock, but confirms the subprocess correctly downloads/
+  caches weights and leaves the main process's torch state usable
+  afterward - `.model_cache/omnicloudmask/` populated, ~4.9s). The
+  Linux-specific fork deadlock itself can only be validated by re-running
+  on `cluster-rise`. Re-running the 87-field/full-year-2025 test a third
+  time with this fix, to a new output path
+  (`test_full87_v2/planetary_computer_samples/`, not the original
+  `test_full87/` path) so this run's output can't be confused with the
+  two earlier partial/failed attempts still sitting at the old path
+  (left in place, not deleted). Only proceeding to the 2017-2024 backfill
+  once this test completes cleanly (all scenes processed, `Scene failed`
+  count consistent with real STAC/asset issues rather than systemic
+  worker failure).

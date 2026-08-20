@@ -5,6 +5,7 @@ is still recorded on samples for reference/QA, but ``valid_px`` is decided
 by the OmniCloudMask (OCM) class for the pixel. See METHODS.md for the
 rationale and the parameter choices made below.
 """
+import multiprocessing as mp
 from pathlib import Path
 
 import numpy as np
@@ -78,6 +79,11 @@ def ocm_clear_mask(red, green, nir, no_data_value=0.0):
     return clear, ocm_class
 
 
+def _warm_model_cache_subprocess():
+    dummy = np.zeros((64, 64), dtype="float32")
+    compute_ocm_class(dummy, dummy, dummy)
+
+
 def warm_model_cache():
     """Force the OmniCloudMask model weights to download, synchronously.
 
@@ -90,6 +96,27 @@ def warm_model_cache():
     reproduced consistently). Calling this first, single-threaded, means
     the file already exists by the time workers start, so none of them
     ever trigger a download.
+
+    Runs the dummy inference in a spawned *subprocess* rather than
+    in-process: running a real torch op here would initialize torch's
+    OpenMP thread pool in the main process, and `ProcessPoolExecutor`
+    forks its workers from this same main process. A worker forked after
+    the parent has an initialized OpenMP thread pool inherits corrupted
+    thread-pool state (the child only gets the forking thread, not
+    OpenMP's other worker threads, but OpenMP's bookkeeping is copied
+    as-is) - every subsequent torch CPU op in that child then deadlocks
+    waiting on threads that don't exist. Observed at max_workers=32: all
+    32 workers hung forever inside their first OCM inference call, zero
+    completions, zero exceptions (a deadlock, not a crash). Isolating the
+    warm-up torch op to a throwaway spawned subprocess means the main
+    process itself never touches torch, so the fork later on starts from
+    clean state.
     """
-    dummy = np.zeros((64, 64), dtype="float32")
-    compute_ocm_class(dummy, dummy, dummy)
+    ctx = mp.get_context("spawn")
+    proc = ctx.Process(target=_warm_model_cache_subprocess)
+    proc.start()
+    proc.join()
+    if proc.exitcode != 0:
+        raise RuntimeError(
+            f"Model cache warm-up subprocess failed (exit code {proc.exitcode})"
+        )
