@@ -102,3 +102,22 @@ run on the Red/Green/NIR bands.
   `acrrisewesteurope` and registering the environment in
   `mlw-rise-westeurope` are actions on shared Azure infra, left for the
   user to run (commands documented in `README.md`).
+
+- 2026-08-20: **Verified locally.** Created the `halo-s2` conda env from
+  the updated `environment.yml` (`torch-2.13.0+cpu`, `omnicloudmask-1.7.1`;
+  no GPU on this dev machine, confirmed via `torch.cuda.is_available()` →
+  `False`, so it exercised the CPU/fp32 code path). Smoke-tested
+  `add_ocm_mask()`, `sample_scene()`, and the per-time-step masking logic
+  in `load_composite()` against synthetic Sentinel-2-shaped data (not real
+  STAC data — no network/PC calls were made). All three produced the
+  expected `OCM_CLASS`/`OCM_CLEAR`/`valid_px` output and the model weights
+  downloaded correctly into the git-ignored `.model_cache/`.
+
+- 2026-08-20: **Found, not fixed:** `timed_step()`'s log message
+  (`download_s2_pc.py`) includes a `Δ` character that raises
+  `UnicodeEncodeError` on a plain Windows console (cp1252 stdout) — it
+  never surfaced before because Azure ML's Linux containers default to
+  UTF-8. This is pre-existing, unrelated to cloud masking, and out of
+  scope for this branch; flagged for the user to decide whether to fix
+  separately (workaround used for local testing here:
+  `PYTHONIOENCODING=utf-8`).
