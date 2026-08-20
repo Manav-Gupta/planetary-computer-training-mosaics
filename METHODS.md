@@ -6,19 +6,99 @@ were considered.
 
 ## Cloud masking (branch `fix/addCloudMasking`)
 
-Context: the existing pipeline masks clouds using the Sentinel-2 L2A
-Scene Classification Layer (SCL), keeping pixels whose SCL class is in
+Context: the existing pipeline masked clouds using the Sentinel-2 L2A
+Scene Classification Layer (SCL), keeping pixels whose SCL class was in
 `valid_scl_classes` (config default `[4, 5, 6, 11]` = vegetation / bare
 soil / water / snow). This is fast (no extra compute) but SCL is known to
 miss thin cloud and mis-classify cloud shadow in some scenes.
 
-Goal: add an optional GPU-accelerated deep-learning cloud/shadow mask using
+Goal: add a GPU-capable deep-learning cloud/shadow mask using
 [OmniCloudMask](https://github.com/DPIRD-DMA/OmniCloudMask) (DPIRD-DMA),
-run on the Red/Green/NIR bands, as a higher-accuracy alternative or
-supplement to SCL.
+run on the Red/Green/NIR bands.
 
 - 2026-08-20: Repo scaffolding for this work — new branch
   `fix/addCloudMasking`, `.claude/` git-ignored, `CLAUDE.md` project rules
-  added, this file created. No masking code yet; architectural choices
-  (SCL replace vs. supplement, pipeline integration point, GPU package
-  install, thresholds) to be decided with the user before implementation.
+  added, this file created.
+
+- 2026-08-20: **SCL replaced, not supplemented.** OmniCloudMask (OCM) is
+  now the sole source of pixel validity (`valid_px`). SCL is still recorded
+  on every scene sample for reference/QA, and `max_cloud_cover` (STAC
+  scene-level search filter) is unchanged, but `valid_scl_classes` no
+  longer gates per-pixel validity — it's kept in the config as an
+  informational field only. Chosen over a hybrid (SCL AND OCM) or a
+  config-selectable mode to keep the masking logic single-path and
+  because OCM's published accuracy is higher than SCL's; a hybrid was
+  considered but rejected as unnecessary complexity for this pipeline.
+
+- 2026-08-20: **Integration point: run OCM once per loaded scene window,
+  not per full MGRS tile.** The pipeline already windows each scene read
+  to the field-polygon bounding box (+ padding) before loading —
+  `load_scene()` (feeds the per-scene Parquet / `sample_scene()` path) and
+  `load_composite()` (feeds the on-the-fly median-composite path in
+  `main()`). OCM now runs on that already-loaded, already-bounded array
+  right after it's read into memory, in both places:
+  - `load_scene()`: one OCM run per scene (or per spatial batch, when
+    `scene_spatial_batching` splits a large scene into sub-windows —
+    each batch is loaded and masked independently).
+  - `load_composite()`: one OCM run per STAC item (time step) in the
+    loaded stack, looped, before the median composite is computed.
+  `mosaic_scene_samples.py` (which builds mosaics from the scene-sample
+  Parquet files) does **not** re-run OCM — it just reads the `valid_px`
+  column that `sample_scene()` already wrote. This satisfies "one OCM run
+  per image": each scene/window is masked exactly once, downstream
+  composite/mosaic steps reuse that result rather than recomputing it.
+
+- 2026-08-20: **Masked classes: strict clear-sky.** OmniCloudMask outputs
+  4 classes (0=clear, 1=thick cloud, 2=thin cloud, 3=shadow). Only class 0
+  counts as valid; thick cloud, thin cloud, and shadow are all masked out.
+  Rejected: keeping thin cloud (class 2) as valid to retain more
+  pixels/dates — decided against because thin cloud still biases
+  reflectance and downstream indices (NDVI etc.).
+
+- 2026-08-20: **Inference parameters** (`scripts/cloud_mask.py`): OCM's
+  published defaults — `patch_size=1000`, `patch_overlap=300`,
+  `batch_size=1`, `model_version=None` (latest). `inference_dtype` is
+  `fp16` on CUDA GPUs (speed) and `fp32` on CPU/MPS (fp16 is slow/
+  unsupported on most CPUs, MPS has partial fp16 support). `inference_device`
+  is auto-detected (`cuda` → `mps` → `cpu`). `no_data_value=0` matches the
+  Sentinel-2 nodata fill value used by `odc.stac.load`.
+
+- 2026-08-20: **Model weight cache location.** OmniCloudMask downloads its
+  model weights on first use; `destination_model_dir` is pinned to a
+  project-local `.model_cache/omnicloudmask/` (git-ignored) instead of the
+  library's default out-of-project cache directory, per the standing rule
+  against writing outside the project root without asking.
+
+- 2026-08-20: **Local package install: CPU-only torch.** `omnicloudmask`
+  and `torch` (CPU wheels, via
+  `--extra-index-url https://download.pytorch.org/whl/cpu`) added to
+  `environment.yml`; the `halo-s2` conda env was created fresh from it (no
+  such env existed locally beforehand — only `base`, `galileo-pc-embeddings`,
+  `geospatial` were present). CPU wheels chosen to avoid a multi-GB CUDA
+  download on a dev machine that isn't doing GPU inference; GPU inference is
+  intended for Azure ML instead, where the exact CUDA build can be pinned to
+  the compute SKU when a GPU cluster is actually used.
+
+- 2026-08-20: **Azure ML compute: CPU for now.** `azml.txt` (git-ignored,
+  local infra notes) shows the only documented compute cluster,
+  `cluster-rise-d16`, is a D-series VM — CPU-only, no GPU. Rather than block
+  on provisioning a GPU cluster, the pipeline runs OCM on CPU on Azure ML
+  for now. No code change is needed to add GPU support later:
+  `cloud_mask.py`'s device auto-detection means pointing the job's
+  `compute:` at a GPU cluster (e.g. an NC-series) is a config-only change.
+
+- 2026-08-20: **Azure ML environment: switched to a named, pre-built
+  environment** (`sentinels_poly_timeseries_extract`), replacing the
+  previous inline `image: mcr.microsoft.com/...` + `conda_file:
+  environment.yml` approach in `azureml/halo_s2_pipeline_job.yml`. Defined
+  in `azureml/environment/` (Dockerfile + AML environment asset spec) so
+  the `halo-s2` env (now including `omnicloudmask`/`torch`) is baked into
+  the image at build time instead of solved/installed on every job run —
+  faster job startup. Chosen name is project-specific
+  (`sentinels_poly_timeseries_extract`), distinct from
+  `galileo-pc-embeddings` (a different project's environment referenced in
+  `azml.txt`). The Dockerfile/environment spec were written but **not**
+  built, pushed, or registered by Claude Code — building/pushing to
+  `acrrisewesteurope` and registering the environment in
+  `mlw-rise-westeurope` are actions on shared Azure infra, left for the
+  user to run (commands documented in `README.md`).
