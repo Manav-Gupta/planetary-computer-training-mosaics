@@ -520,3 +520,15 @@ first, backfill 2017-2024 only if that test passes.
   (456 files, 8.68GB, ~102s): expect roughly 2,300-2,400 scene-parquet
   files, ~44GB, well under 15 min runtime. Output path:
   `JosefWagner/halo_azml/full87_s1_2017_2024/planetary_computer_samples/`.
+- 2026-08-21: **Backfill (`zen_leek_mf6pcc4x2b`) completed and
+  verified.** ~545s (~9.1 min) of pipeline runtime, in line with the
+  extrapolated estimate. 2,153/2,153 scene jobs wrote successfully
+  (`Built 2,153 scene jobs from cached STAC inventory` - of 2,577 STAC
+  items, 2,153 actually intersect a field polygon), 0 `Scene failed`.
+  Verified against the datastore directly: 2,153 scene-parquet files,
+  46.1GB, all 8 years (2017-2024) and all 7 orbit tracks represented.
+  Per-year distribution (119/110/354/453/436/236/230/215) reproduces the
+  same S1 constellation-history pattern seen in the inventory sizing scan
+  - not a data problem. This is the requested 2017-2024 Sentinel-1 VV/VH
+  deliverable for all 87 EBRD field polygons, alongside the existing
+  Sentinel-2 deliverable on `main`.
