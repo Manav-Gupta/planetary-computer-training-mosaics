@@ -1,0 +1,41 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: halo-s1-ebrd87-2017-2024
+description: >-
+  Full 2017-01-01 to 2024-12-31 (8 calendar years) Sentinel-1 RTC (VV/VH
+  backscatter) time series for all 87 unique EBRD field polygons, using
+  the S1 ingestion pipeline (data/dldS1Data branch) validated by the
+  2025-only test (calm_tangelo_sy4ydtr66k - 456/456 scenes written, 0
+  failures, output counts matched the STAC inventory exactly). Inventory
+  + per-scene download only, no mosaic/composite step - same scope
+  pattern as the S2 backfill. See METHODS.md for scope rationale and
+  sizing (measured via --stac-inventory-only: 2,577 scenes, ~86.6k
+  field-scene intersections, uneven per-year density due to S1
+  constellation history - S1A+S1B dual coverage 2019-2021, S1B lost Dec
+  2021, S1A-only through 2024).
+
+code: ..
+
+command: >-
+  python scripts/run_azure_pipeline.py
+  --source s1
+  --config configs/test_ebrd87_s1_2017_2024.json
+  --fields-path ${{inputs.fields}}
+  --output-dir ${{outputs.samples}}
+  --steps inventory download
+
+environment: azureml:sentinels_poly_timeseries_extract@latest
+
+compute: azureml:cluster-rise
+
+experiment_name: halo-sentinel1-backfill
+
+inputs:
+  fields:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test_full87/fields/
+
+outputs:
+  samples:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/full87_s1_2017_2024/planetary_computer_samples/

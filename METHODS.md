@@ -488,3 +488,35 @@ first, backfill 2017-2024 only if that test passes.
   (~0.081 / ~0.012 linear) physically sensible for agricultural land.
   Config: `configs/test_ebrd87_s1_2025.json`. Job spec:
   `azureml/test_ebrd87_s1_2025_job.yml`.
+- 2026-08-21: **Single-year test (`calm_tangelo_sy4ydtr66k`) passed.**
+  Ran against all 87 EBRD fields, full calendar year 2025, `max_workers=32`
+  on `cluster-rise` - same infra as the validated S2 test. Completed in
+  ~102s of actual pipeline runtime (vs S2's ~757s for a similar scope -
+  expected: S1 has fewer scenes for a year (505 vs 841) and no
+  torch/OmniCloudMask inference per scene). 456/456 scene jobs wrote
+  successfully (505 STAC items found, 456 actually intersect a field
+  polygon - the rest only clip the search bbox corner), 0 `Scene failed`.
+  Verified output directly against the datastore: 456 scene-parquet
+  files, 8.68GB, per-orbit file counts (104/78/74/73/53/51/23) matching
+  the STAC inventory's orbit summary exactly.
+
+## Sentinel-1 2017-2024 backfill (87 EBRD fields, all polygons)
+
+- 2026-08-21: **Scope:** same 87 EBRD field polygons and 2017-2024 date
+  range as the Sentinel-2 backfill, per explicit user instruction to
+  backfill once the single-year test passed. Config:
+  `configs/test_ebrd87_s1_2017_2024.json`. Job spec:
+  `azureml/ebrd87_s1_2017_2024_job.yml`.
+- 2026-08-21: **Measured before submitting.** `--stac-inventory-only`
+  locally: 2,577 Sentinel-1 items, 86,611 field-scene intersections, same
+  7 orbit tracks. Per-year counts are uneven in a way that matches known
+  Sentinel-1 constellation history, not a data problem: 131 (2017) / 110
+  (2018) - S1A alone, IW coverage of this AOI still ramping up - up to
+  582 (2020) / 553 (2021) - S1A+S1B dual coverage, ~6-day repeat - back
+  down to 267/258/240 (2022-2024) after S1B failed in Dec 2021, leaving
+  S1A-only ~12-day repeat until S1C (launched Dec 2024) starts
+  contributing meaningfully in 2025 (see the 2025 test's inventory, which
+  does include S1C scenes). Extrapolating from the validated 2025 run
+  (456 files, 8.68GB, ~102s): expect roughly 2,300-2,400 scene-parquet
+  files, ~44GB, well under 15 min runtime. Output path:
+  `JosefWagner/halo_azml/full87_s1_2017_2024/planetary_computer_samples/`.
