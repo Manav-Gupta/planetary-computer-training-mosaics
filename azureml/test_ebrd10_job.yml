@@ -1,0 +1,42 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: halo-s2-cloudmask-test-ebrd10
+description: >-
+  One-off test of the OmniCloudMask integration (fix/addCloudMasking) against
+  10 randomly-selected real field polygons from the EBRD test dataset,
+  March-October 2025. Not the production job - see halo_s2_pipeline_job.yml
+  for that.
+
+code: ..
+
+command: >-
+  python scripts/run_azure_pipeline.py
+  --config configs/test_ebrd10_2025.json
+  --fields-path ${{inputs.fields}}
+  --output-dir ${{outputs.samples}}
+  --steps inventory download mosaic
+  --mosaic-window-days 14
+  --mosaic-method median
+
+environment: azureml:sentinels_poly_timeseries_extract@latest
+
+# max_workers=8 in configs/test_ebrd10_2025.json x OMP/MKL_NUM_THREADS=2 = 16,
+# matching cluster-rise-d16's 16 vCPUs without oversubscribing torch's
+# per-process CPU thread pool. See METHODS.md for the reasoning.
+environment_variables:
+  OMP_NUM_THREADS: "2"
+  MKL_NUM_THREADS: "2"
+
+compute: azureml:cluster-rise-d16
+
+experiment_name: halo-sentinel2-cloudmask-test
+
+inputs:
+  fields:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/shared/halo_azml/fields/
+
+outputs:
+  samples:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test/planetary_computer_samples/

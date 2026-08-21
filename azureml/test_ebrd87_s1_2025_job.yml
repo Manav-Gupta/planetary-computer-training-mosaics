@@ -1,0 +1,37 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: halo-s1-test-ebrd87-2025full
+description: >-
+  Test of the Sentinel-1 RTC (VV/VH backscatter) ingestion pipeline
+  (data/dldS1Data branch) against all 87 unique EBRD field polygons, full
+  calendar year 2025 (Jan 1 - Dec 31). Inventory + per-scene download only,
+  no mosaic/composite step - same scope pattern as the validated Sentinel-2
+  test (bold_wire_std9sty1fb). No OmniCloudMask/torch dependency for S1
+  (SAR is unaffected by cloud cover), so the fork-after-torch-init deadlock
+  class from the S2 pipeline does not apply here. See METHODS.md.
+
+code: ..
+
+command: >-
+  python scripts/run_azure_pipeline.py
+  --source s1
+  --config configs/test_ebrd87_s1_2025.json
+  --fields-path ${{inputs.fields}}
+  --output-dir ${{outputs.samples}}
+  --steps inventory download
+
+environment: azureml:sentinels_poly_timeseries_extract@latest
+
+compute: azureml:cluster-rise
+
+experiment_name: halo-sentinel1-test
+
+inputs:
+  fields:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/shared/halo_azml/fields/
+
+outputs:
+  samples:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test_full87_s1_2025/planetary_computer_samples/

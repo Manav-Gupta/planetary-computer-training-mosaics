@@ -1,0 +1,32 @@
+{
+  "fields_path": "/mnt/azureml/inputs/fields/ebrd_all87_fields.geojson",
+  "output_dir": "/mnt/azureml/outputs/planetary_computer_samples",
+
+  "field_id_col": "Field ID",
+
+  "start_date": "2017-01-01",
+  "end_date": "2024-12-31",
+  "interval_days": 14,
+
+  "max_pixels_per_date": 10000,
+  "random_seed": 42,
+
+  "scene_spatial_batching": true,
+  "max_scene_window_pixels": 16000000,
+  "scene_spatial_batch_size_m": null,
+  "scene_samples_subdir": "scene_samples_batched",
+
+  "collection": "sentinel-2-l2a",
+  "max_cloud_cover": 90,
+
+  "assets": ["B02", "B03", "B04", "B08", "B11", "B12", "SCL"],
+  "valid_scl_classes": [4, 5, 6, 11],
+
+  "resolution": 10,
+  "output_prefix": "ebrd_full87_2017_2024_pc_samples",
+
+  "download_retries": 3,
+  "retry_base_sleep": 10,
+  "skip_existing": true,
+  "max_workers": 32
+}

@@ -16,3 +16,9 @@ dependencies:
       - planetary-computer
       - pystac-client
       - odc-stac
+      # CPU-only torch wheels (small download); omnicloudmask auto-detects
+      # cuda/mps and falls back to cpu, so a CUDA build of torch (large) is
+      # only needed on machines actually doing GPU inference.
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch
+      - omnicloudmask
