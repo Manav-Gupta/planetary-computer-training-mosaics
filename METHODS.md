@@ -409,3 +409,82 @@ run on the Red/Green/NIR bands.
   2017. Both fixes (model-download race, fork-after-torch-init deadlock)
   held at this larger scale. This is the requested 2017-2024 deliverable
   for all 87 EBRD field polygons.
+
+## Sentinel-1 VV/VH ingestion (branch `data/dldS1Data`)
+
+Context: extend the same scene-based ingest/sampling design already
+validated for Sentinel-2 to Sentinel-1 VV/VH backscatter, over the same
+87 EBRD field polygons. Per explicit user instruction: test a single year
+first, backfill 2017-2024 only if that test passes.
+
+- 2026-08-21: **RTC over GRD.** User initially asked for the raw GRD
+  product; checked MPC's `sentinel-1-grd` collection description directly
+  - it is Level-1 GRD, ellipsoid-projected using a single terrain-height
+  annotation (not true terrain correction), stores detected amplitude
+  rather than calibrated backscatter, and is not delivered in a regular
+  map-projected grid - would need calibration (DN to sigma0/gamma0) and
+  DEM-based orthorectification before it's usable the way this pipeline
+  reads Sentinel-2 (odc.stac.load to a target UTM CRS/resolution/bounds).
+  MPC's own docs point GRD users at `sentinel-1-rtc` - "a global
+  radiometrically terrain corrected dataset derived from Sentinel-1 GRD" -
+  for exactly this reason. Confirmed against the live MPC catalog:
+  `sentinel-1-rtc` items expose clean `vv`/`vh` COG assets, already
+  geocoded to a UTM CRS at 10m (same grid style as the S2 pipeline
+  already reads), calibrated to linear gamma0 backscatter, nodata
+  `-32768` (`float32`). Flagged this to the user; they confirmed RTC.
+- 2026-08-21: **New self-contained script, not a shared module.**
+  `scripts/download_s1_pc.py` duplicates a handful of small generic
+  helpers already in `download_s2_pc.py` (`log`/`timed_step`/
+  `retry_with_backoff`/`resolve_fields_path`/`estimate_utm_crs`/
+  `bbox_pixel_count`/`split_fields_spatially`/`load_cached_scene_jobs`)
+  rather than importing them from that module. Reason: `download_s2_pc.py`
+  imports `cloud_mask`, which imports `torch` - Sentinel-1 needs no
+  optical cloud masking at all (SAR is unaffected by cloud cover, unlike
+  the Sentinel-2 OmniCloudMask step), and importing `download_s2_pc.py`
+  would pull torch into the S1 pipeline's main process for no reason,
+  re-opening exactly the fork-after-torch-init deadlock class fixed for
+  S2 (see above) even though S1 workers would never call into torch.
+  Keeping S1 fully torch-free removes that entire bug class rather than
+  just avoiding triggering it - no `warm_model_cache()`-equivalent
+  needed, no OMP/MKL thread-count tuning needed.
+- 2026-08-21: **Output partitioning: `orbit_state`/`relative_orbit`
+  instead of `mgrs_tile`.** Sentinel-1 RTC items have no MGRS tile
+  property (S2's partition key) - each item exposes `sat:orbit_state`
+  (ascending/descending) and `sat:relative_orbit` instead, which behave
+  similarly to a "tile": the same relative orbit revisits roughly the
+  same footprint every repeat cycle. Used
+  `orbit_state=.../relative_orbit=.../year=.../month=...` as the scene
+  Parquet output partitioning (`output_path_for_scene` in
+  `download_s1_pc.py`), and added a `stac_orbit_summary.csv` inventory
+  output analogous to S2's `stac_tile_summary.csv`.
+- 2026-08-21: **`valid_px` from the RTC nodata sentinel, not a computed
+  mask.** No cloud/shadow classifier is needed or run for S1. Each pixel
+  is flagged `valid_px = (vv != -32768) & (vh != -32768)` (RTC's own
+  nodata value, confirmed from the STAC asset `raster:bands` metadata),
+  matching the S2 pipeline's pattern of keeping every sampled pixel with
+  a boolean validity flag rather than silently dropping rows.
+- 2026-08-21: **Kept raw linear backscatter, no dB conversion at download
+  time.** `vv`/`vh` are written as delivered by RTC (linear gamma0 power
+  ratio). Matches the Sentinel-2 pipeline's own convention of writing raw
+  band DNs at download time and deferring derived-index computation
+  (NDVI etc.) to the mosaic step - a dB (`10*log10`) conversion, if
+  wanted, belongs at the same later stage, not here.
+- 2026-08-21: **`run_azure_pipeline.py` gets a `--source {s2,s1}` flag**
+  selecting which download script the `inventory`/`download` steps shell
+  out to (`download_s2_pc.py` vs `download_s1_pc.py`), default `s2` for
+  backward compatibility. `mosaic` step untouched/unused for S1 for now -
+  same "inventory + download only, no mosaic" scope decision as the
+  validated S2 test.
+- 2026-08-21: **Local validation before touching Azure.** Ran
+  `--stac-inventory-only` locally against the 87 fields for full calendar
+  year 2025: 505 Sentinel-1 items, 16,250 field-scene intersections, 7
+  relative-orbit tracks (mix of S1A and S1C - S1B has been dead since Dec
+  2021), all 87 fields covered by at least one orbit track. Then ran
+  `process_one_scene_item` directly (not through the CLI) against 2 real
+  scenes end-to-end: spatial batching triggered correctly (5 batches for
+  a wide-coverage scene), 1,435,233 + 9,329 sample rows written, nodata
+  pixels (960 in the first scene) correctly flagged `valid_px=False`
+  while keeping their raw `-32768` value, valid-pixel VV/VH medians
+  (~0.081 / ~0.012 linear) physically sensible for agricultural land.
+  Config: `configs/test_ebrd87_s1_2025.json`. Job spec:
+  `azureml/test_ebrd87_s1_2025_job.yml`.

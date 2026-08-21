@@ -1,0 +1,29 @@
+{
+  "fields_path": "/mnt/azureml/inputs/fields/ebrd_all87_fields.geojson",
+  "output_dir": "/mnt/azureml/outputs/planetary_computer_samples",
+
+  "field_id_col": "Field ID",
+
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+
+  "max_pixels_per_date": 10000,
+  "random_seed": 42,
+
+  "scene_spatial_batching": true,
+  "max_scene_window_pixels": 16000000,
+  "scene_spatial_batch_size_m": null,
+  "scene_samples_subdir": "s1_scene_samples_batched",
+
+  "collection": "sentinel-1-rtc",
+
+  "assets": ["vv", "vh"],
+
+  "resolution": 10,
+  "output_prefix": "ebrd_full87_s1_2025_pc_samples",
+
+  "download_retries": 3,
+  "retry_base_sleep": 10,
+  "skip_existing": true,
+  "max_workers": 32
+}

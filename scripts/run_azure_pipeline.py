@@ -23,6 +23,12 @@ def parse_args():
         help="Pipeline steps to run.",
     )
     parser.add_argument(
+        "--source",
+        choices=["s2", "s1"],
+        default="s2",
+        help="Which download script to run inventory/download steps against.",
+    )
+    parser.add_argument(
         "--mosaic-output-dir",
         default=None,
         help="Output folder for mosaic products. Defaults to <output_dir>/mosaics.",
@@ -120,12 +126,13 @@ def main():
     )
 
     python = sys.executable
+    download_script = "download_s2_pc.py" if args.source == "s2" else "download_s1_pc.py"
 
     if "inventory" in args.steps:
         run_command(
             [
                 python,
-                "download_s2_pc.py",
+                download_script,
                 "--config",
                 str(runtime_config_path),
                 "--stac-inventory-only",
@@ -137,7 +144,7 @@ def main():
         run_command(
             [
                 python,
-                "download_s2_pc.py",
+                download_script,
                 "--config",
                 str(runtime_config_path),
                 "--scene-samples",
