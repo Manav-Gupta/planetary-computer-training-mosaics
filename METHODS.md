@@ -532,3 +532,37 @@ first, backfill 2017-2024 only if that test passes.
   - not a data problem. This is the requested 2017-2024 Sentinel-1 VV/VH
   deliverable for all 87 EBRD field polygons, alongside the existing
   Sentinel-2 deliverable on `main`.
+
+## Data location cleanup
+
+- 2026-08-21: **Consolidated final data into 2 clean, non-personal
+  folders; deleted all test/intermediate output.** Per explicit user
+  request ("drop all non final data, I want 2 clean folders with s1 and
+  s2 data"). Server-side copied (via `az storage copy`, AAD auth, no
+  local egress) the two validated 2017-2024 backfills out of the
+  personal `JosefWagner/halo_azml/` prefix into
+  `rise_data:shared/halo_azml/s2/` (5,520 files, 39.18GB) and
+  `.../shared/halo_azml/s1/` (2,158 files, 46.18GB) - byte-for-byte
+  verified against the source blob counts/sizes before deleting anything,
+  plus opened one real Parquet file from each new location to confirm
+  content integrity (not just byte counts). Also moved the shared 87-field
+  input (`ebrd_all87_fields.geojson`) to `.../shared/halo_azml/fields/`,
+  since every job spec reads it and it isn't disposable test output.
+  Deleted (via `az storage fs directory delete` - the ADLS Gen2 directory
+  API, not the plain blob API; `strisewesteurope` has hierarchical
+  namespace enabled, and `az storage remove`/azcopy's blob-level delete
+  removed file content but left empty HNS directory objects behind,
+  `CompletedWithErrors`, so the directory API was needed to fully clear
+  the tree): `JosefWagner/halo_azml/full87_2017_2024/` and
+  `full87_s1_2017_2024/` (the now-duplicated originals), plus
+  `test/`, `test_full87/`, `test_full87_v2/`, and `test_full87_s1_2025/`
+  (the 10-field smoke test, the failed `mango_kale` run + a stray
+  `mosaics/` folder, and the two superseded 2025-only tests - roughly
+  1,861 files / 14.9GB of test output). `JosefWagner/halo_azml/` is now
+  empty. Updated the `fields` input path in every job spec
+  (`azureml/*.yml`) from the deleted `test_full87/fields/` to
+  `shared/halo_azml/fields/` so future job resubmission still works -
+  output paths in the job specs were left pointing at the personal
+  `JosefWagner/halo_azml/...` prefix unchanged (a resubmitted job writes
+  a fresh working copy there; promotion to `shared/` stays a deliberate,
+  separate step, not automatic).

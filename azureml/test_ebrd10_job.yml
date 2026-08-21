@@ -34,7 +34,7 @@ experiment_name: halo-sentinel2-cloudmask-test
 inputs:
   fields:
     type: uri_folder
-    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test/fields/
+    path: azureml://datastores/rise_data/paths/shared/halo_azml/fields/
 
 outputs:
   samples:

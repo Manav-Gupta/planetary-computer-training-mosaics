@@ -33,7 +33,7 @@ experiment_name: halo-sentinel1-backfill
 inputs:
   fields:
     type: uri_folder
-    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test_full87/fields/
+    path: azureml://datastores/rise_data/paths/shared/halo_azml/fields/
 
 outputs:
   samples:
