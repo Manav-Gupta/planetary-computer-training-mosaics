@@ -14,9 +14,7 @@ command: >-
   --mosaic-window-days 14
   --mosaic-method median
 
-environment:
-  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04
-  conda_file: environment.yml
+environment: azureml:sentinels_poly_timeseries_extract@latest
 
 # CHANGE ME: a compute cluster that exists in your workspace.
 # You can override at submit time instead of editing this file:

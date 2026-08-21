@@ -43,9 +43,9 @@ Key fields:
 | `output_dir` | Where outputs are written. |
 | `field_id_col` | Column that uniquely identifies each field. |
 | `start_date` / `end_date` / `interval_days` | Date range and window size. |
-| `assets` | Sentinel-2 bands to pull, e.g. `["B02","B03","B04","B08","B11","B12","SCL"]`. |
-| `valid_scl_classes` | SCL codes kept as valid (e.g. `[4,5,6,11]` = veg / bare / water / snow). |
-| `max_cloud_cover` | Scene-level cloud filter (%). |
+| `assets` | Sentinel-2 bands to pull, e.g. `["B02","B03","B04","B08","B11","B12","SCL"]`. Must include B04/B03/B08 (red/green/NIR) — OmniCloudMask needs them. |
+| `max_cloud_cover` | Scene-level STAC search filter (%) — coarse pre-filter before per-pixel cloud masking. |
+| `valid_scl_classes` | **Informational only** — SCL is still recorded on every sample for reference/QA, but pixel validity is decided by OmniCloudMask, not this list. |
 | `max_pixels_per_date` / `max_pixels_per_scene` | Random pixel cap per window / scene. |
 | `resolution` | Metres per pixel (10). |
 | `scene_spatial_batching`, `max_scene_window_pixels` | Split very large scene reads to control memory. |
@@ -101,11 +101,46 @@ The `fields` input is a `uri_folder`; upload the shapefile **and its sidecar fil
 (`.shx`, `.dbf`, `.prj`) into that folder. The pipeline resolves the folder to the
 single vector file inside it, so you don't pass the `.shp` name explicitly.
 
+### Custom environment (`sentinels_poly_timeseries_extract`)
+
+The job points at a named Azure ML environment, `azureml:sentinels_poly_timeseries_extract@latest`,
+defined in `azureml/environment/` instead of installing `environment.yml`
+fresh on every job run. It bakes the `halo-s2` conda env (including
+`omnicloudmask` + CPU `torch`) into a Docker image at build time.
+
+Register it once (Azure ML builds and pushes the image itself, via ACR
+Tasks against the workspace's linked registry — no separate `docker build`/
+`docker push` needed):
+
+```bash
+az ml environment create -f azureml/environment/environment.yml \
+  --resource-group <your-resource-group> \
+  --workspace-name <your-workspace>
+```
+
+If you'd rather build and push the image locally instead, build from the
+repo root using `azureml/environment/Dockerfile`, push it to your ACR, then
+set `image: <acr>.azurecr.io/sentinels_poly_timeseries_extract:<tag>` in
+`azureml/environment/environment.yml` in place of the `build:` block.
+
+`cluster-rise-d16` (and the placeholder `cpu-cluster` in the job file) are
+CPU-only, so OmniCloudMask runs on CPU there today. GPU support is already
+wired in (`scripts/cloud_mask.py` auto-detects `cuda`/`mps`/`cpu`) — point
+`compute:` at a GPU cluster later and it's used automatically, no code
+changes needed.
+
 ## Notes
 
 - **Sentinel-2 baseline harmonization** is applied automatically: scenes with
   processing baseline ≥ 04.00 have the +1000 DN offset removed so pre- and
   post-2022-01-25 reflectance are on the same scale.
+- **Cloud/shadow masking** uses [OmniCloudMask](https://github.com/DPIRD-DMA/OmniCloudMask)
+  (DPIRD-DMA), run once per loaded scene window on the red/green/NIR bands.
+  A pixel is valid (`valid_px`) only if OmniCloudMask classifies it as clear
+  (thick cloud, thin cloud, and shadow are all masked out — strict
+  clear-sky). SCL is still recorded on every sample for reference but no
+  longer decides validity. See `METHODS.md` for the full rationale and
+  parameter choices.
 - **Not included in the repo:** imagery, sample Parquet, and field data are
   git-ignored (see `.gitignore`). You supply your own polygon layer.
 
@@ -114,12 +149,15 @@ single vector file inside it, so you don't pass the `.shp` name explicitly.
 ```
 scripts/
   download_s2_pc.py         # STAC search + pixel sampling (+ composite mode)
+  cloud_mask.py              # OmniCloudMask GPU cloud/shadow masking
   mosaic_scene_samples.py   # mosaics + indices from scene samples
   append_mosaic_timeline.py # append later date ranges to an existing mosaic timeline
   run_azure_pipeline.py     # orchestrates inventory -> download -> mosaic
 azureml/
   halo_s2_pipeline_job.yml  # Azure ML command job
+  environment/              # custom AML environment (Dockerfile + env spec)
 configs/
   planetary_config_azure_template.json  # config template
 environment.yml
+METHODS.md                  # log of methodological choices (cloud masking, etc.)
 ```

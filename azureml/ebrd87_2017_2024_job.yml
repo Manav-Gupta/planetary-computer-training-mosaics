@@ -1,0 +1,44 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: halo-s2-cloudmask-ebrd87-2017-2024
+description: >-
+  Full 2017-01-01 to 2024-12-31 (8 calendar years) time series for all 87
+  unique EBRD field polygons, using the OmniCloudMask integration
+  (fix/addCloudMasking) validated by the 2025-only test
+  (bold_wire_std9sty1fb - fork-deadlock and model-download-race fixes
+  both confirmed). Inventory + per-scene download/masking only, no
+  mosaic/composite step, consistent with the validated test scope. See
+  METHODS.md for scope rationale and sizing (measured via
+  --stac-inventory-only: 5,979 scenes, ~75.5k field-scene intersections).
+
+code: ..
+
+command: >-
+  python scripts/run_azure_pipeline.py
+  --config configs/test_ebrd87_2017_2024.json
+  --fields-path ${{inputs.fields}}
+  --output-dir ${{outputs.samples}}
+  --steps inventory download
+
+environment: azureml:sentinels_poly_timeseries_extract@latest
+
+# max_workers=32 in configs/test_ebrd87_2017_2024.json x OMP/MKL_NUM_THREADS=2 = 64,
+# matching cluster-rise's 64 vCPUs (Standard_E64ds_v4, 504GB RAM) without
+# oversubscribing torch's per-process CPU thread pool. See METHODS.md.
+environment_variables:
+  OMP_NUM_THREADS: "2"
+  MKL_NUM_THREADS: "2"
+
+compute: azureml:cluster-rise
+
+experiment_name: halo-sentinel2-cloudmask-backfill
+
+inputs:
+  fields:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/test_full87/fields/
+
+outputs:
+  samples:
+    type: uri_folder
+    path: azureml://datastores/rise_data/paths/JosefWagner/halo_azml/full87_2017_2024/planetary_computer_samples/

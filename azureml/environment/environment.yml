@@ -1,0 +1,9 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: sentinels_poly_timeseries_extract
+description: >-
+  CPU image for the Sentinel-2 training-mosaics pipeline (SCL baseline
+  harmonization + OmniCloudMask GPU-capable cloud/shadow masking). Bakes
+  the halo-s2 conda env in at build time; see azureml/environment/Dockerfile.
+build:
+  path: ../..
+  dockerfile_path: azureml/environment/Dockerfile
